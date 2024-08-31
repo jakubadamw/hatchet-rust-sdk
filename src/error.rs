@@ -13,7 +13,9 @@ pub enum Error {
     #[error("could not subscribe to actions after {0} retries")]
     CouldNotSubscribeToActions(usize),
     #[error("could not decode the provided token to retrieve the host/port pair")]
-    CouldNotDecodeToken(#[from] jsonwebtoken::errors::Error),
+    CouldNotDecodeToken(jsonwebtoken::errors::Error),
+    #[error("could not decode action payload: {0}")]
+    CouldNotDecodeActionPayload(serde_json::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

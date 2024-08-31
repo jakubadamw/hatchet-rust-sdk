@@ -7,6 +7,8 @@ pub(crate) struct Environment {
     pub(crate) token: SecretString,
     pub(crate) host_port: Option<String>,
     #[serde(default)]
+    pub(crate) listener_v2_timeout: u64,
+    #[serde(default)]
     pub(crate) tls_strategy: crate::ClientTlStrategy,
     pub(crate) tls_cert_file: Option<String>,
     pub(crate) tls_cert: Option<String>,
@@ -15,6 +17,8 @@ pub(crate) struct Environment {
     pub(crate) tls_root_ca_file: Option<String>,
     pub(crate) tls_root_ca: Option<String>,
     pub(crate) tls_server_name: Option<String>,
+    #[serde(default)]
+    pub(crate) namespace: String,
 }
 
 pub struct Client {
