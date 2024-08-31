@@ -6,22 +6,29 @@ pub(crate) type StepFunction =
 #[derive(derive_builder::Builder)]
 #[builder(pattern = "owned")]
 pub(crate) struct Step {
-    name: String,
+    pub(crate) name: String,
     function: Arc<StepFunction>,
+    #[builder(default)]
+    pub(crate) retries: usize,
+    #[builder(default)]
+    pub(crate) parents: Vec<String>,
     #[builder(default = "std::time::Duration::from_secs(60)")]
-    timeout: std::time::Duration,
+    pub(crate) timeout: std::time::Duration,
 }
 
 #[derive(derive_builder::Builder)]
 #[builder(pattern = "owned")]
 pub struct Workflow {
-    id: String,
-    description: String,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) version: String,
     pub(crate) steps: Vec<Step>,
     #[builder(default)]
-    on_events: Vec<String>,
+    pub(crate) on_events: Vec<String>,
     #[builder(default)]
-    on_crons: Vec<String>,
+    pub(crate) on_crons: Vec<String>,
+    #[builder(default = "std::time::Duration::from_secs(60)")]
+    pub(crate) schedule_timeout: std::time::Duration,
 }
 
 impl Workflow {

@@ -5,7 +5,7 @@ mod workflow;
 
 pub use error::{Error, Result};
 
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum ClientTlStrategy {
     None,
