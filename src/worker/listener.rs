@@ -74,24 +74,24 @@ where
 
     // FIXME: Obviously, run this asynchronously rather than blocking the main listening loop.
     match tokio::task::spawn_local(async move { action_callable(input).await }).await {
-        Ok(_) => {
+        Ok(output_value) => {
             dispatcher
                 .send_step_action_event(step_action_event(
                     worker_id,
                     &action,
                     StepActionEventType::StepEventTypeCompleted,
-                    Default::default(),
+                    serde_json::to_string(&output_value).expect("must succeed"),
                 ))
                 .await?
                 .into_inner();
         }
-        Err(_) => {
+        Err(join_error) => {
             dispatcher
                 .send_step_action_event(step_action_event(
                     worker_id,
                     &action,
                     StepActionEventType::StepEventTypeFailed,
-                    Default::default(),
+                    join_error.to_string(),
                 ))
                 .await?
                 .into_inner();
