@@ -435,7 +435,7 @@ checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hatchet-sdk"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "ctrlc-async",
  "derive_builder",
