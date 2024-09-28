@@ -73,30 +73,32 @@ where
         .map_err(crate::Error::CouldNotDecodeActionPayload)?;
 
     // FIXME: Obviously, run this asynchronously rather than blocking the main listening loop.
-    match tokio::task::spawn_local(async move { action_callable(input).await }).await {
-        Ok(output_value) => {
-            dispatcher
-                .send_step_action_event(step_action_event(
-                    worker_id,
-                    &action,
-                    StepActionEventType::StepEventTypeCompleted,
-                    serde_json::to_string(&output_value).expect("must succeed"),
-                ))
-                .await?
-                .into_inner();
-        }
-        Err(join_error) => {
-            dispatcher
-                .send_step_action_event(step_action_event(
-                    worker_id,
-                    &action,
-                    StepActionEventType::StepEventTypeFailed,
-                    join_error.to_string(),
-                ))
-                .await?
-                .into_inner();
-        }
-    }
+    let action_event =
+        match tokio::task::spawn_local(async move { action_callable(input).await }).await {
+            Ok(Ok(output_value)) => step_action_event(
+                worker_id,
+                &action,
+                StepActionEventType::StepEventTypeCompleted,
+                serde_json::to_string(&output_value).expect("must succeed"),
+            ),
+            Ok(Err(error)) => step_action_event(
+                worker_id,
+                &action,
+                StepActionEventType::StepEventTypeFailed,
+                error.to_string(),
+            ),
+            Err(join_error) => step_action_event(
+                worker_id,
+                &action,
+                StepActionEventType::StepEventTypeFailed,
+                join_error.to_string(),
+            ),
+        };
+
+    dispatcher
+        .send_step_action_event(action_event)
+        .await?
+        .into_inner();
 
     Ok(())
 }

@@ -4,6 +4,7 @@ version = "0.1.0-alpha.1"
 edition = "2021"
 
 [dependencies]
+anyhow = "1"
 ctrlc-async = "3"
 derive_builder = "0.20"
 envy = "0.4"

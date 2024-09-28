@@ -16,7 +16,7 @@ enum ClientTlStrategy {
 
 pub use client::Client;
 pub use worker::{Worker, WorkerBuilder};
-pub use workflow::{Workflow, WorkflowBuilder};
+pub use workflow::{Step, StepBuilder, Workflow, WorkflowBuilder};
 
 #[cfg(test)]
 mod tests;
