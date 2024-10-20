@@ -25,7 +25,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new() -> crate::Result<Self> {
+    pub fn new() -> crate::InternalResult<Self> {
         let environment = envy::prefixed("HATCHET_CLIENT_").from_env::<Environment>()?;
         Ok(Self { environment })
     }

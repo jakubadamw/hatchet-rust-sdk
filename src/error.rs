@@ -1,11 +1,13 @@
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum InternalError {
     #[error("failed to load configuration from the environment: {0}")]
     Environment(#[from] envy::Error),
     #[error("worker registration request: {0}")]
     CouldNotRegisterWorker(tonic::Status),
     #[error("workflow registration request:: {0}")]
     CouldNotPutWorkflow(tonic::Status),
+    #[error("workflow schedule request:: {0}")]
+    CouldNotTriggerWorkflow(tonic::Status),
     #[error("dispatcher listen error: {0}")]
     CouldNotListenToDispatcher(tonic::Status),
     #[error("step status send error: {0}")]
@@ -26,6 +28,14 @@ pub enum Error {
     CouldNotDecodeToken(jsonwebtoken::errors::Error),
     #[error("could not decode action payload: {0}")]
     CouldNotDecodeActionPayload(serde_json::Error),
+}
+
+pub type InternalResult<T> = std::result::Result<T, InternalError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("internal error: {0}")]
+    Internal(#[from] InternalError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

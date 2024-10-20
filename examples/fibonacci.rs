@@ -1,4 +1,4 @@
-use hatchet_sdk::{Client, StepBuilder, WorkflowBuilder};
+use hatchet_sdk::{Client, Context, StepBuilder, WorkflowBuilder};
 
 fn fibonacci(n: u32) -> u32 {
     (1..=n)
@@ -33,7 +33,7 @@ struct Output {
     result: u32,
 }
 
-async fn execute(Input { n }: Input) -> anyhow::Result<Output> {
+async fn execute(_context: Context, Input { n }: Input) -> anyhow::Result<Output> {
     Ok(Output {
         result: fibonacci(n),
     })
@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let client = Client::new()?;
-    let mut worker = client.worker("example").build();
+    let mut worker = client.worker("example_fibonacci").build();
     worker.register_workflow(
         WorkflowBuilder::default()
             .name("fibonacci")

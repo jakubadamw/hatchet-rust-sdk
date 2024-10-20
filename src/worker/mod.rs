@@ -5,11 +5,44 @@ use grpc::{
     CreateWorkflowJobOpts, CreateWorkflowStepOpts, CreateWorkflowVersionOpts, PutWorkflowRequest,
     WorkerRegisterRequest, WorkerRegisterResponse, WorkflowKind,
 };
-use secrecy::{ExposeSecret, SecretString};
 use tonic::transport::Certificate;
 use tracing::info;
 
 use crate::{client::Environment, ClientTlStrategy, Workflow};
+
+#[derive(Clone)]
+pub(crate) struct ServiceWithAuthorization {
+    authorization_header_value: secrecy::SecretString,
+}
+
+impl ServiceWithAuthorization {
+    fn new(token: secrecy::SecretString) -> Self {
+        use secrecy::ExposeSecret;
+
+        Self {
+            authorization_header_value: format!("Bearer {token}", token = token.expose_secret())
+                .into(),
+        }
+    }
+}
+
+impl tonic::service::Interceptor for ServiceWithAuthorization {
+    fn call(
+        &mut self,
+        mut request: tonic::Request<()>,
+    ) -> Result<tonic::Request<()>, tonic::Status> {
+        use secrecy::ExposeSecret;
+        let authorization_header_value: tonic::metadata::MetadataValue<tonic::metadata::Ascii> =
+            self.authorization_header_value
+                .expose_secret()
+                .parse()
+                .expect("must parse successfully");
+        request
+            .metadata_mut()
+            .insert("authorization", authorization_header_value);
+        Ok(request)
+    }
+}
 
 #[derive(derive_builder::Builder)]
 #[builder(pattern = "owned", build_fn(private, name = "build_private"))]
@@ -52,8 +85,8 @@ struct TokenClaims {
 fn construct_endpoint_url<'a>(
     tls_strategy: ClientTlStrategy,
     host_port_in_environment: Option<&'a str>,
-    token: &SecretString,
-) -> crate::Result<String> {
+    token: &secrecy::SecretString,
+) -> crate::InternalResult<String> {
     use secrecy::ExposeSecret;
 
     let protocol = match tls_strategy {
@@ -64,7 +97,7 @@ fn construct_endpoint_url<'a>(
     Ok(format!(
         "{protocol}://{}",
         host_port_in_environment
-            .map(|value| crate::Result::Ok(std::borrow::Cow::Borrowed(value)))
+            .map(|value| crate::InternalResult::Ok(std::borrow::Cow::Borrowed(value)))
             .unwrap_or_else(|| {
                 let key = jsonwebtoken::DecodingKey::from_secret(&[]);
                 let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::ES256);
@@ -72,7 +105,7 @@ fn construct_endpoint_url<'a>(
                 validation.validate_aud = false;
                 let data: jsonwebtoken::TokenData<TokenClaims> =
                     jsonwebtoken::decode(token.expose_secret(), &key, &validation)
-                        .map_err(crate::Error::CouldNotDecodeToken)?;
+                        .map_err(crate::InternalError::CouldNotDecodeToken)?;
                 Ok(data.claims.grpc_broadcast_address.into())
             })?
     ))
@@ -84,8 +117,8 @@ async fn construct_endpoint(
     tls_root_ca_file: Option<&str>,
     tls_root_ca: Option<&str>,
     host_port: Option<&str>,
-    token: &SecretString,
-) -> crate::Result<tonic::transport::Endpoint> {
+    token: &secrecy::SecretString,
+) -> crate::InternalResult<tonic::transport::Endpoint> {
     let mut endpoint =
         tonic::transport::Endpoint::new(construct_endpoint_url(tls_strategy, host_port, token)?)
             .expect("endpoint must be valid");
@@ -99,7 +132,7 @@ async fn construct_endpoint(
             };
             let extra_root_certificate = match (tls_root_ca, tls_root_ca_file) {
                 (Some(_), Some(_)) => {
-                    return Err(crate::Error::CantSetBothEnvironmentVariables(
+                    return Err(crate::InternalError::CantSetBothEnvironmentVariables(
                         "HATCHET_CLIENT_TLS_ROOT_CA",
                         "HATCHET_CLIENT_TLS_ROOT_CA_FILE",
                     ));
@@ -109,7 +142,7 @@ async fn construct_endpoint(
                 }
                 (None, Some(tls_root_ca_file)) => Some(std::borrow::Cow::Owned(
                     tokio::fs::read(tls_root_ca_file).await.map_err(|err| {
-                        crate::Error::CouldNotReadFile(err, tls_root_ca_file.to_owned())
+                        crate::InternalError::CouldNotReadFile(err, tls_root_ca_file.to_owned())
                     })?,
                 )),
                 (None, None) => None,
@@ -131,7 +164,7 @@ impl<'a> Worker<'a> {
         self.workflows.push(workflow);
     }
 
-    pub async fn start(self) -> crate::Result<()> {
+    pub async fn start(self) -> crate::InternalResult<()> {
         use tonic::IntoRequest;
 
         let (heartbeat_interrupt_sender1, heartbeat_interrupt_receiver) =
@@ -174,24 +207,15 @@ impl<'a> Worker<'a> {
         )
         .await?;
 
-        let authorization_header: tonic::metadata::MetadataValue<tonic::metadata::Ascii> =
-            format!("Bearer {token}", token = token.expose_secret())
-                .parse()
-                .expect("must parse successfully");
-        let authorization_header_cloned = authorization_header.clone();
+        let interceptor = ServiceWithAuthorization::new(token.clone());
 
         let mut workflow_service_client =
             grpc::workflow_service_client::WorkflowServiceClient::with_interceptor(
                 endpoint
                     .connect()
                     .await
-                    .map_err(crate::Error::CouldNotConnectToWorkflowService)?,
-                move |mut request: tonic::Request<()>| {
-                    request
-                        .metadata_mut()
-                        .insert("authorization", authorization_header.clone());
-                    Ok(request)
-                },
+                    .map_err(crate::InternalError::CouldNotConnectToWorkflowService)?,
+                interceptor.clone(),
             );
 
         let mut all_actions = vec![];
@@ -244,7 +268,7 @@ impl<'a> Worker<'a> {
             workflow_service_client
                 .put_workflow(PutWorkflowRequest { opts: Some(opts) })
                 .await
-                .map_err(crate::Error::CouldNotPutWorkflow)?;
+                .map_err(crate::InternalError::CouldNotPutWorkflow)?;
         }
 
         // FIXME: Account for all the settings from `self.environment`.
@@ -253,13 +277,8 @@ impl<'a> Worker<'a> {
                 endpoint
                     .connect()
                     .await
-                    .map_err(crate::Error::CouldNotConnectToDispatcher)?,
-                move |mut request: tonic::Request<()>| {
-                    request
-                        .metadata_mut()
-                        .insert("authorization", authorization_header_cloned.clone());
-                    Ok(request)
-                },
+                    .map_err(crate::InternalError::CouldNotConnectToDispatcher)?,
+                interceptor.clone(),
             )
         };
 
@@ -280,12 +299,12 @@ impl<'a> Worker<'a> {
         let WorkerRegisterResponse { worker_id, .. } = dispatcher
             .register(request)
             .await
-            .map_err(crate::Error::CouldNotRegisterWorker)?
+            .map_err(crate::InternalError::CouldNotRegisterWorker)?
             .into_inner();
 
         futures_util::try_join! {
             heartbeat::run(dispatcher.clone(), &worker_id, heartbeat_interrupt_receiver),
-            listener::run(dispatcher, namespace, &worker_id, self.workflows, *listener_v2_timeout, listening_interrupt_receiver, heartbeat_interrupt_sender2),
+            listener::run(dispatcher, workflow_service_client, namespace, &worker_id, self.workflows, *listener_v2_timeout, listening_interrupt_receiver, heartbeat_interrupt_sender2),
         }?;
 
         Ok(())

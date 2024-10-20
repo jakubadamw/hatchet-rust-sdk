@@ -10,7 +10,7 @@ pub(crate) async fn run<F>(
     >,
     worker_id: &str,
     mut interrupt_receiver: tokio::sync::mpsc::Receiver<()>,
-) -> crate::Result<()>
+) -> crate::InternalResult<()>
 where
     F: tonic::service::Interceptor + Send + 'static,
 {
@@ -24,7 +24,7 @@ where
                     worker_id: worker_id.clone(),
                 })
                 .await
-                .map_err(crate::Error::CouldNotSendHeartbeat)?;
+                .map_err(crate::InternalError::CouldNotSendHeartbeat)?;
 
             tokio::select! {
                 _ = interval.tick() => {
@@ -35,7 +35,7 @@ where
                 }
             }
         }
-        crate::Result::Ok(())
+        crate::InternalResult::Ok(())
     })
     .await
     .expect("must succeed spawing")?;

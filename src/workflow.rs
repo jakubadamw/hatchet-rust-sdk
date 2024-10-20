@@ -1,9 +1,8 @@
-use std::sync::Arc;
+use crate::step_function::Context;
 
-type StepFunction =
-    dyn Fn(
-        serde_json::Value,
-    ) -> futures_util::future::LocalBoxFuture<'static, anyhow::Result<serde_json::Value>>;
+use super::step_function::StepFunction;
+
+use std::sync::Arc;
 
 #[derive(derive_builder::Builder)]
 #[builder(pattern = "owned")]
@@ -26,11 +25,14 @@ impl StepBuilder {
         I: serde::de::DeserializeOwned,
         O: serde::ser::Serialize,
         Fut: std::future::Future<Output = anyhow::Result<O>> + 'static,
-        F: Fn(I) -> Fut,
+        F: Fn(Context, I) -> Fut,
     {
         use futures_util::FutureExt;
-        self.function = Some(Arc::new(|value| {
-            let result = function(serde_json::from_value(value).expect("must succeed"));
+        self.function = Some(Arc::new(|context, value| {
+            let result = function(
+                context,
+                serde_json::from_value(value).expect("must succeed"),
+            );
             async { Ok(serde_json::to_value(result.await?).expect("must succeed")) }.boxed_local()
         }));
         self

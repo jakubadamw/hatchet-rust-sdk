@@ -1,9 +1,10 @@
 use futures_util::FutureExt;
-use tokio::{task::LocalSet, task_local};
+use tokio::task::LocalSet;
 use tonic::IntoRequest;
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    step_function::Context,
     worker::{grpc::ActionType, DEFAULT_ACTION_TIMEOUT},
     Workflow,
 };
@@ -13,7 +14,7 @@ use super::{
         dispatcher_client::DispatcherClient, AssignedAction, StepActionEvent, StepActionEventType,
         WorkerListenRequest,
     },
-    ListenStrategy,
+    ListenStrategy, ServiceWithAuthorization,
 };
 
 const DEFAULT_ACTION_LISTENER_RETRY_INTERVAL: std::time::Duration =
@@ -44,19 +45,25 @@ struct ActionInput<T> {
     input: T,
 }
 
-async fn handle_start_step_run<F>(
+async fn handle_start_step_run(
     dispatcher: &mut DispatcherClient<
-        tonic::service::interceptor::InterceptedService<tonic::transport::Channel, F>,
+        tonic::service::interceptor::InterceptedService<
+            tonic::transport::Channel,
+            ServiceWithAuthorization,
+        >,
+    >,
+    workflow_service_client: super::grpc::workflow_service_client::WorkflowServiceClient<
+        tonic::service::interceptor::InterceptedService<
+            tonic::transport::Channel,
+            ServiceWithAuthorization,
+        >,
     >,
     local_set: &tokio::task::LocalSet,
     namespace: &str,
     worker_id: &str,
     workflows: &[Workflow],
     action: AssignedAction,
-) -> crate::Result<()>
-where
-    F: tonic::service::Interceptor + Send + 'static,
-{
+) -> crate::InternalResult<()> {
     let Some(action_callable) = workflows
         .iter()
         .flat_map(|workflow| workflow.actions(namespace))
@@ -77,16 +84,27 @@ where
             Default::default(),
         ))
         .await
-        .map_err(crate::Error::CouldNotSendStepStatus)?
+        .map_err(crate::InternalError::CouldNotSendStepStatus)?
         .into_inner();
 
     let input: ActionInput<serde_json::Value> = serde_json::from_str(&action.action_payload)
-        .map_err(crate::Error::CouldNotDecodeActionPayload)?;
+        .map_err(crate::InternalError::CouldNotDecodeActionPayload)?;
+
+    let workflow_run_id = action.workflow_run_id.clone();
+    let workflow_step_run_id = action.step_run_id.clone();
 
     // FIXME: Obviously, run this asynchronously rather than blocking the main listening loop.
     let action_event = match local_set
         .run_until(async move {
-            tokio::task::spawn_local(async move { action_callable(input.input).await }).await
+            tokio::task::spawn_local(async move {
+                let context = Context::new(
+                    workflow_run_id,
+                    workflow_step_run_id,
+                    workflow_service_client,
+                );
+                action_callable(context, input.input).await
+            })
+            .await
         })
         .await
     {
@@ -113,15 +131,24 @@ where
     dispatcher
         .send_step_action_event(action_event)
         .await
-        .map_err(crate::Error::CouldNotSendStepStatus)?
+        .map_err(crate::InternalError::CouldNotSendStepStatus)?
         .into_inner();
 
     Ok(())
 }
 
-pub(crate) async fn run<F>(
+pub(crate) async fn run(
     mut dispatcher: DispatcherClient<
-        tonic::service::interceptor::InterceptedService<tonic::transport::Channel, F>,
+        tonic::service::interceptor::InterceptedService<
+            tonic::transport::Channel,
+            ServiceWithAuthorization,
+        >,
+    >,
+    workflow_service_client: super::grpc::workflow_service_client::WorkflowServiceClient<
+        tonic::service::interceptor::InterceptedService<
+            tonic::transport::Channel,
+            ServiceWithAuthorization,
+        >,
     >,
     namespace: &str,
     worker_id: &str,
@@ -129,10 +156,7 @@ pub(crate) async fn run<F>(
     listener_v2_timeout: Option<u64>,
     mut interrupt_receiver: tokio::sync::mpsc::Receiver<()>,
     _heartbeat_interrupt_sender: tokio::sync::mpsc::Sender<()>,
-) -> crate::Result<()>
-where
-    F: tonic::service::Interceptor + Send + 'static,
-{
+) -> crate::InternalResult<()> {
     use futures_util::StreamExt;
 
     let mut retries: usize = 0;
@@ -147,7 +171,7 @@ where
             retries = 0;
         }
         if retries > DEFAULT_ACTION_LISTENER_RETRY_COUNT {
-            return Err(crate::Error::CouldNotSubscribeToActions(
+            return Err(crate::InternalError::CouldNotSubscribeToActions(
                 DEFAULT_ACTION_LISTENER_RETRY_COUNT,
             ));
         }
@@ -180,7 +204,7 @@ where
         let mut stream = tokio::select! {
             response = response => {
                 response
-                    .map_err(crate::Error::CouldNotListenToDispatcher)?
+                    .map_err(crate::InternalError::CouldNotListenToDispatcher)?
                     .into_inner()
             }
             result = interrupt_receiver.recv() => {
@@ -229,7 +253,7 @@ where
 
                     match action_type {
                         ActionType::StartStepRun => {
-                            handle_start_step_run(&mut dispatcher, &local_set, namespace, worker_id, &workflows, action).await?;
+                            handle_start_step_run(&mut dispatcher, workflow_service_client.clone(), &local_set, namespace, worker_id, &workflows, action).await?;
                         }
                         ActionType::CancelStepRun => {
                             todo!()

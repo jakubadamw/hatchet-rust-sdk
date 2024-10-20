@@ -514,6 +514,7 @@ dependencies = [
  "dotenv",
  "envy",
  "futures-util",
+ "http",
  "jsonwebtoken",
  "prost",
  "prost-types",
