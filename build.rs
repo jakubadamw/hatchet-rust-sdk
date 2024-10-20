@@ -14,7 +14,12 @@ fn prepend_package_name_and_build(
     writeln!(temp_file, "package {package_name};")?;
 
     let target_path = temp_file.into_temp_path();
-    tonic_build::compile_protos(target_path)?;
+    tonic_build::configure()
+        .disable_package_emission()
+        .compile_protos(
+            &[&target_path],
+            &[target_path.parent().expect("must succeed")],
+        )?;
     Ok(())
 }
 

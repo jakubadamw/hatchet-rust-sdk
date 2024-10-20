@@ -6,8 +6,7 @@ use crate::worker::WorkerBuilder;
 pub(crate) struct Environment {
     pub(crate) token: SecretString,
     pub(crate) host_port: Option<String>,
-    #[serde(default)]
-    pub(crate) listener_v2_timeout: u64,
+    pub(crate) listener_v2_timeout: Option<u64>,
     #[serde(default)]
     pub(crate) tls_strategy: crate::ClientTlStrategy,
     pub(crate) tls_cert_file: Option<String>,

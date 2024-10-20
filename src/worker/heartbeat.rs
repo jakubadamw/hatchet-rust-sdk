@@ -23,7 +23,8 @@ where
                     heartbeat_at: Some(std::time::SystemTime::now().into()),
                     worker_id: worker_id.clone(),
                 })
-                .await?;
+                .await
+                .map_err(crate::Error::CouldNotSendHeartbeat)?;
 
             tokio::select! {
                 _ = interval.tick() => {

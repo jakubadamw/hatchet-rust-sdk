@@ -42,7 +42,7 @@ impl StepBuilder {
 pub struct Workflow {
     #[builder(setter(into))]
     pub(crate) name: String,
-    #[builder(setter(into))]
+    #[builder(default, setter(into))]
     pub(crate) description: String,
     #[builder(default, setter(into))]
     pub(crate) version: String,
@@ -70,8 +70,11 @@ impl Workflow {
         &'a self,
         namespace: &'a str,
     ) -> impl Iterator<Item = (String, Arc<StepFunction>)> + 'a {
-        self.steps
-            .iter()
-            .map(move |step| (format!("{namespace}{}", step.name), step.function.clone()))
+        self.steps.iter().map(move |step| {
+            (
+                format!("{namespace}{}:{}", self.name, step.name),
+                step.function.clone(),
+            )
+        })
     }
 }
