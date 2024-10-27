@@ -19,22 +19,59 @@ pub struct Step {
     pub(crate) timeout: std::time::Duration,
 }
 
-impl StepBuilder {
-    pub fn function<I, O, Fut, F>(mut self, function: &'static F) -> Self
-    where
-        I: serde::de::DeserializeOwned,
-        O: serde::ser::Serialize,
-        Fut: std::future::Future<Output = anyhow::Result<O>> + 'static,
-        F: Fn(Context, I) -> Fut,
-    {
+pub trait UserStepFunction<I, O, H> {
+    fn to_step_function(self) -> Arc<StepFunction>;
+}
+
+pub struct NoArguments;
+pub struct ContextArgument;
+
+impl<I, O, Fut, F> UserStepFunction<I, O, ContextArgument> for &'static F
+where
+    I: serde::de::DeserializeOwned,
+    O: serde::ser::Serialize,
+    Fut: std::future::Future<Output = anyhow::Result<O>> + 'static,
+    F: Fn(Context, I) -> Fut,
+{
+    fn to_step_function(self) -> Arc<StepFunction> {
         use futures_util::FutureExt;
-        self.function = Some(Arc::new(|context, value| {
-            let result = function(
+        Arc::new(|context, value| {
+            let result = (self)(
                 context,
                 serde_json::from_value(value).expect("must succeed"),
             );
             async { Ok(serde_json::to_value(result.await?).expect("must succeed")) }.boxed_local()
-        }));
+        })
+    }
+}
+
+impl<I, O, Fut, F> UserStepFunction<I, O, NoArguments> for &'static F
+where
+    I: serde::de::DeserializeOwned,
+    O: serde::ser::Serialize,
+    Fut: std::future::Future<Output = anyhow::Result<O>> + 'static,
+    F: Fn(I) -> Fut,
+{
+    fn to_step_function(self) -> Arc<StepFunction> {
+        use futures_util::FutureExt;
+        Arc::new(|_context, value| {
+            let result = (self)(serde_json::from_value(value).expect("must succeed"));
+            async { Ok(serde_json::to_value(result.await?).expect("must succeed")) }.boxed_local()
+        })
+    }
+}
+
+impl StepBuilder {
+    pub fn function<
+        AnyVariant,
+        I: serde::de::DeserializeOwned,
+        O: serde::ser::Serialize,
+        F: UserStepFunction<I, O, AnyVariant>,
+    >(
+        mut self,
+        function: F,
+    ) -> Self {
+        self.function = Some(function.to_step_function());
         self
     }
 }
