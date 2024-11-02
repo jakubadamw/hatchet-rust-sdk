@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use futures_util::FutureExt;
 use tokio::task::LocalSet;
 use tonic::IntoRequest;
@@ -14,7 +16,7 @@ use super::{
         dispatcher_client::DispatcherClient, AssignedAction, StepActionEvent, StepActionEventType,
         WorkerListenRequest,
     },
-    ListenStrategy, ServiceWithAuthorization,
+    DataMap, ListenStrategy, ServiceWithAuthorization,
 };
 
 const DEFAULT_ACTION_LISTENER_RETRY_INTERVAL: std::time::Duration =
@@ -63,6 +65,7 @@ async fn handle_start_step_run(
     worker_id: &str,
     workflows: &[Workflow],
     action: AssignedAction,
+    data: Arc<DataMap>,
 ) -> crate::InternalResult<()> {
     let Some(action_callable) = workflows
         .iter()
@@ -101,6 +104,7 @@ async fn handle_start_step_run(
                     workflow_run_id,
                     workflow_step_run_id,
                     workflow_service_client,
+                    data,
                 );
                 action_callable(context, input.input).await
             })
@@ -155,7 +159,7 @@ pub(crate) async fn run(
     workflows: Vec<Workflow>,
     listener_v2_timeout: Option<u64>,
     mut interrupt_receiver: tokio::sync::mpsc::Receiver<()>,
-    _heartbeat_interrupt_sender: tokio::sync::mpsc::Sender<()>,
+    data: Arc<DataMap>,
 ) -> crate::InternalResult<()> {
     use futures_util::StreamExt;
 
@@ -253,7 +257,7 @@ pub(crate) async fn run(
 
                     match action_type {
                         ActionType::StartStepRun => {
-                            handle_start_step_run(&mut dispatcher, workflow_service_client.clone(), &local_set, namespace, worker_id, &workflows, action).await?;
+                            handle_start_step_run(&mut dispatcher, workflow_service_client.clone(), &local_set, namespace, worker_id, &workflows, action, data.clone()).await?;
                         }
                         ActionType::CancelStepRun => {
                             todo!()

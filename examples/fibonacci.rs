@@ -1,4 +1,4 @@
-use hatchet_sdk::{Client, Context, StepBuilder, WorkflowBuilder};
+use hatchet_sdk::{Client, StepBuilder, WorkflowBuilder};
 
 fn fibonacci(n: u32) -> u32 {
     (1..=n)

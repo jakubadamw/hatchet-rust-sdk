@@ -1,7 +1,15 @@
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    sync::Arc,
+};
+
 use futures_util::lock::Mutex;
 use tracing::info;
 
 use crate::worker::{grpc, ServiceWithAuthorization};
+
+pub(crate) type DataMap = HashMap<TypeId, Box<dyn Any + Send + Sync>>;
 
 pub struct Context {
     workflow_run_id: String,
@@ -15,6 +23,7 @@ pub struct Context {
         >,
         u16,
     )>,
+    data: Arc<DataMap>,
 }
 
 impl Context {
@@ -27,12 +36,22 @@ impl Context {
                 ServiceWithAuthorization,
             >,
         >,
+        data: Arc<DataMap>,
     ) -> Self {
         Self {
             workflow_run_id,
             workflow_service_client_and_spawn_index: Mutex::new((workflow_service_client, 0)),
             workflow_step_run_id,
+            data,
         }
+    }
+
+    pub fn datum<D: std::any::Any + Send + Sync>(&self) -> &D {
+        let type_id = TypeId::of::<D>();
+        self.data
+            .get(&type_id)
+            .and_then(|value| value.downcast_ref())
+            .unwrap_or_else(|| panic!("could not find an attached datum of the type: {type_id:?}"))
     }
 
     pub async fn trigger_workflow<I: serde::Serialize>(

@@ -1,6 +1,8 @@
 mod heartbeat;
 mod listener;
 
+use std::sync::Arc;
+
 use grpc::{
     CreateWorkflowJobOpts, CreateWorkflowStepOpts, CreateWorkflowVersionOpts, PutWorkflowRequest,
     WorkerRegisterRequest, WorkerRegisterResponse, WorkflowKind,
@@ -8,7 +10,7 @@ use grpc::{
 use tonic::transport::Certificate;
 use tracing::info;
 
-use crate::{client::Environment, ClientTlStrategy, Workflow};
+use crate::{client::Environment, step_function::DataMap, ClientTlStrategy, Workflow};
 
 #[derive(Clone)]
 pub(crate) struct ServiceWithAuthorization {
@@ -55,9 +57,18 @@ pub struct Worker<'a> {
     environment: &'a super::client::Environment,
     #[builder(default, setter(skip))]
     workflows: Vec<Workflow>,
+    #[builder(default, setter(custom))]
+    data: DataMap,
 }
 
 impl<'a> WorkerBuilder<'a> {
+    pub fn datum<D: std::any::Any + Send + Sync>(mut self, datum: D) -> Self {
+        self.data
+            .get_or_insert_default()
+            .insert(std::any::TypeId::of::<D>(), Box::new(datum));
+        self
+    }
+
     pub fn build(self) -> Worker<'a> {
         self.build_private().expect("must succeed")
     }
@@ -172,7 +183,7 @@ impl<'a> Worker<'a> {
         let (listening_interrupt_sender1, listening_interrupt_receiver) =
             tokio::sync::mpsc::channel(1);
         let _listening_interrupt_sender2 = listening_interrupt_sender1.clone();
-        let heartbeat_interrupt_sender2 = heartbeat_interrupt_sender1.clone();
+        let _heartbeat_interrupt_sender2 = heartbeat_interrupt_sender1.clone();
 
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.unwrap();
@@ -181,6 +192,14 @@ impl<'a> Worker<'a> {
             let _ = heartbeat_interrupt_sender1.send(()).await;
             let _ = listening_interrupt_sender1.send(()).await;
         });
+
+        let Self {
+            workflows,
+            data,
+            name,
+            max_runs,
+            environment,
+        } = self;
 
         let Environment {
             token,
@@ -195,7 +214,7 @@ impl<'a> Worker<'a> {
             tls_server_name,
             namespace,
             listener_v2_timeout,
-        } = self.environment;
+        } = environment;
 
         let endpoint = construct_endpoint(
             tls_server_name.as_deref(),
@@ -220,7 +239,9 @@ impl<'a> Worker<'a> {
 
         let mut all_actions = vec![];
 
-        for workflow in &self.workflows {
+        let data = Arc::new(data);
+
+        for workflow in &workflows {
             let namespaced_workflow_name =
                 format!("{namespace}{workflow_name}", workflow_name = workflow.name);
 
@@ -284,8 +305,8 @@ impl<'a> Worker<'a> {
 
         let request = {
             let mut request: tonic::Request<WorkerRegisterRequest> = WorkerRegisterRequest {
-                worker_name: self.name.clone(),
-                max_runs: self.max_runs,
+                worker_name: name,
+                max_runs,
                 services: vec!["default".to_owned()],
                 actions: all_actions,
                 // FIXME: Implement.
@@ -304,7 +325,7 @@ impl<'a> Worker<'a> {
 
         futures_util::try_join! {
             heartbeat::run(dispatcher.clone(), &worker_id, heartbeat_interrupt_receiver),
-            listener::run(dispatcher, workflow_service_client, namespace, &worker_id, self.workflows, *listener_v2_timeout, listening_interrupt_receiver, heartbeat_interrupt_sender2),
+            listener::run(dispatcher, workflow_service_client, namespace, &worker_id, workflows, *listener_v2_timeout, listening_interrupt_receiver, data)
         }?;
 
         Ok(())
