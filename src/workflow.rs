@@ -40,7 +40,16 @@ where
                 context,
                 serde_json::from_value(value).expect("must succeed"),
             );
-            async { Ok(serde_json::to_value(result.await?).expect("must succeed")) }.boxed_local()
+            async {
+                let json_value = serde_json::to_value(result.await?).expect("must succeed");
+                if !json_value.is_object() && !json_value.is_null() {
+                    anyhow::bail!(
+                        "the result of a step function must be `null` serializable to a JSON value of an object: {json_value:?}"
+                    );
+                }
+                Ok(json_value)
+            }
+            .boxed_local()
         })
     }
 }
