@@ -326,12 +326,13 @@ impl Worker<'_> {
         let mut action_function_task_join_set =
             tokio::task::JoinSet::<crate::InternalResult<()>>::new();
 
-        futures_util::try_join! {
+        let (_, local_set) = futures_util::try_join! {
             heartbeat::run(dispatcher.clone(), &worker_id, heartbeat_interrupt_receiver),
             listener::run(&mut action_function_task_join_set, dispatcher, workflow_service_client, namespace, &worker_id, workflows, *listener_v2_timeout, listening_interrupt_receiver, data)
         }?;
 
         action_function_task_join_set.shutdown().await;
+        local_set.await;
 
         Ok(())
     }
