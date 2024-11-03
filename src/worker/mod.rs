@@ -170,7 +170,7 @@ async fn construct_endpoint(
     Ok(endpoint)
 }
 
-impl<'a> Worker<'a> {
+impl Worker<'_> {
     pub fn register_workflow(&mut self, workflow: crate::workflow::Workflow) {
         self.workflows.push(workflow);
     }
