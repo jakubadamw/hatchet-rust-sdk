@@ -103,7 +103,7 @@ async fn handle_start_step_run(
 
     let worker_id = worker_id.to_string();
     let step_run_id = action.step_run_id.clone();
-    let abort_handle = action_function_task_join_set.spawn(async move {
+    let abort_handle = action_function_task_join_set.spawn_local(async move {
         let context = Context::new(
             input.parents,
             workflow_run_id,

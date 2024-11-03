@@ -40,8 +40,8 @@ impl<I, O, Fut, F> UserStepFunction<I, O, ContextArgument> for &'static F
 where
     I: serde::de::DeserializeOwned,
     O: serde::Serialize,
-    Fut: std::future::Future<Output = anyhow::Result<O>> + Send + 'static,
-    F: Fn(Context, I) -> Fut + Sync,
+    Fut: std::future::Future<Output = anyhow::Result<O>> + 'static,
+    F: Fn(Context, I) -> Fut,
 {
     fn to_step_function(self) -> Arc<StepFunction> {
         use futures_util::FutureExt;
@@ -50,7 +50,7 @@ where
                 context,
                 serde_json::from_value(value).expect("must succeed"),
             );
-            std::panic::AssertUnwindSafe(async { serialize_result(future.await?) }.boxed())
+            std::panic::AssertUnwindSafe(async { serialize_result(future.await?) }.boxed_local())
         })
     }
 }
@@ -59,14 +59,14 @@ impl<I, O, Fut, F> UserStepFunction<I, O, NoArguments> for &'static F
 where
     I: serde::de::DeserializeOwned,
     O: serde::ser::Serialize,
-    Fut: std::future::Future<Output = anyhow::Result<O>> + Send + 'static,
-    F: Fn(I) -> Fut + Sync,
+    Fut: std::future::Future<Output = anyhow::Result<O>> + 'static,
+    F: Fn(I) -> Fut,
 {
     fn to_step_function(self) -> Arc<StepFunction> {
         use futures_util::FutureExt;
         Arc::new(|_context, value| {
             let future = (self)(serde_json::from_value(value).expect("must succeed"));
-            std::panic::AssertUnwindSafe(async { serialize_result(future.await?) }.boxed())
+            std::panic::AssertUnwindSafe(async { serialize_result(future.await?) }.boxed_local())
         })
     }
 }
