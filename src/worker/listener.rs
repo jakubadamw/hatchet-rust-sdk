@@ -48,6 +48,7 @@ struct ActionInput<T> {
     parents: HashMap<Ustr, serde_json::Value>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_start_step_run(
     action_function_task_join_set: &mut tokio::task::JoinSet<crate::InternalResult<()>>,
     abort_handles: &mut HashMap<String, tokio::task::AbortHandle>,
@@ -160,6 +161,7 @@ async fn handle_cancel_step_run(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     action_function_task_join_set: &mut tokio::task::JoinSet<crate::InternalResult<()>>,
     mut dispatcher: DispatcherClient<

@@ -93,9 +93,9 @@ struct TokenClaims {
     grpc_broadcast_address: String,
 }
 
-fn construct_endpoint_url<'a>(
+fn construct_endpoint_url(
     tls_strategy: ClientTlStrategy,
-    host_port_in_environment: Option<&'a str>,
+    host_port_in_environment: Option<&str>,
     token: &secrecy::SecretString,
 ) -> crate::InternalResult<String> {
     use secrecy::ExposeSecret;
