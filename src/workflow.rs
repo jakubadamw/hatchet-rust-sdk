@@ -41,7 +41,7 @@ where
     I: serde::de::DeserializeOwned,
     O: serde::Serialize,
     Fut: std::future::Future<Output = anyhow::Result<O>> + 'static,
-    F: Fn(Context, I) -> Fut,
+    F: Fn(Context, I) -> Fut + Send + Sync,
 {
     fn to_step_function(self) -> Arc<StepFunction> {
         use futures_util::FutureExt;
@@ -60,7 +60,7 @@ where
     I: serde::de::DeserializeOwned,
     O: serde::ser::Serialize,
     Fut: std::future::Future<Output = anyhow::Result<O>> + 'static,
-    F: Fn(I) -> Fut,
+    F: Fn(I) -> Fut + Send + Sync,
 {
     fn to_step_function(self) -> Arc<StepFunction> {
         use futures_util::FutureExt;

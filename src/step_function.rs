@@ -105,8 +105,9 @@ impl Context {
 }
 
 pub(crate) type StepFunction = dyn Fn(
-    Context,
-    serde_json::Value,
-) -> std::panic::AssertUnwindSafe<
-    futures_util::future::LocalBoxFuture<'static, anyhow::Result<serde_json::Value>>,
->;
+        Context,
+        serde_json::Value,
+    ) -> std::panic::AssertUnwindSafe<
+        futures_util::future::LocalBoxFuture<'static, anyhow::Result<serde_json::Value>>,
+    > + Send
+    + Sync;

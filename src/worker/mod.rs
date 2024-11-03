@@ -323,16 +323,12 @@ impl Worker<'_> {
             .map_err(crate::InternalError::CouldNotRegisterWorker)?
             .into_inner();
 
-        let mut action_function_task_join_set =
-            tokio::task::JoinSet::<crate::InternalResult<()>>::new();
+        let local_pool_handle = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
 
-        let (_, local_set) = futures_util::try_join! {
+        futures_util::try_join! {
             heartbeat::run(dispatcher.clone(), &worker_id, heartbeat_interrupt_receiver),
-            listener::run(&mut action_function_task_join_set, dispatcher, workflow_service_client, namespace, &worker_id, workflows, *listener_v2_timeout, listening_interrupt_receiver, data)
+            listener::run(&local_pool_handle, dispatcher, workflow_service_client, namespace, &worker_id, workflows, *listener_v2_timeout, listening_interrupt_receiver, data)
         }?;
-
-        action_function_task_join_set.shutdown().await;
-        local_set.await;
 
         Ok(())
     }
