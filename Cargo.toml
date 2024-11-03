@@ -20,6 +20,7 @@ thiserror = "1"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "sync"] }
 tonic = { version = "0.12", features = ["tls", "tls-native-roots"] }
 tracing = "0.1"
+ustr = { version = "1", features = ["serde"] }
 
 [build-dependencies]
 tonic-build = "0.12"

@@ -6,6 +6,7 @@ use std::{
 
 use futures_util::lock::Mutex;
 use tracing::info;
+use ustr::Ustr;
 
 use crate::worker::{grpc, ServiceWithAuthorization};
 
@@ -24,10 +25,12 @@ pub struct Context {
         u16,
     )>,
     data: Arc<DataMap>,
+    parents_outputs: HashMap<Ustr, serde_json::Value>,
 }
 
 impl Context {
     pub(crate) fn new(
+        parents_outputs: HashMap<Ustr, serde_json::Value>,
         workflow_run_id: String,
         workflow_step_run_id: String,
         workflow_service_client: grpc::workflow_service_client::WorkflowServiceClient<
@@ -39,11 +42,21 @@ impl Context {
         data: Arc<DataMap>,
     ) -> Self {
         Self {
+            parents_outputs,
             workflow_run_id,
             workflow_service_client_and_spawn_index: Mutex::new((workflow_service_client, 0)),
             workflow_step_run_id,
             data,
         }
+    }
+
+    pub fn pop_parent_output<O: serde::de::DeserializeOwned>(&mut self, step_name: &str) -> O {
+        serde_json::from_value(
+            self.parents_outputs
+                .remove(&step_name.into())
+                .unwrap_or_else(|| panic!("could not find the output for step '{step_name}'")),
+        )
+        .expect("could not deserialize from JSON")
     }
 
     pub fn datum<D: std::any::Any + Send + Sync>(&self) -> &D {
@@ -87,8 +100,10 @@ impl Context {
     }
 }
 
-pub(crate) type StepFunction =
-    dyn Fn(
+pub(crate) type StepFunction = dyn Fn(
         Context,
         serde_json::Value,
-    ) -> futures_util::future::LocalBoxFuture<'static, anyhow::Result<serde_json::Value>>;
+    ) -> std::panic::AssertUnwindSafe<
+        futures_util::future::BoxFuture<'static, anyhow::Result<serde_json::Value>>,
+    > + Send
+    + Sync;

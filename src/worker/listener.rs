@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use futures_util::FutureExt;
-use tokio::task::LocalSet;
 use tonic::IntoRequest;
 use tracing::{debug, error, info, warn};
+use ustr::Ustr;
 
 use crate::{
     step_function::Context,
@@ -45,9 +45,12 @@ fn step_action_event(
 #[derive(serde::Deserialize)]
 struct ActionInput<T> {
     input: T,
+    parents: HashMap<Ustr, serde_json::Value>,
 }
 
 async fn handle_start_step_run(
+    action_function_task_join_set: &mut tokio::task::JoinSet<crate::InternalResult<()>>,
+    abort_handles: &mut HashMap<String, tokio::task::AbortHandle>,
     dispatcher: &mut DispatcherClient<
         tonic::service::interceptor::InterceptedService<
             tonic::transport::Channel,
@@ -60,7 +63,6 @@ async fn handle_start_step_run(
             ServiceWithAuthorization,
         >,
     >,
-    local_set: &tokio::task::LocalSet,
     namespace: &str,
     worker_id: &str,
     workflows: &[Workflow],
@@ -96,52 +98,70 @@ async fn handle_start_step_run(
     let workflow_run_id = action.workflow_run_id.clone();
     let workflow_step_run_id = action.step_run_id.clone();
 
-    // FIXME: Obviously, run this asynchronously rather than blocking the main listening loop.
-    let action_event = match local_set
-        .run_until(async move {
-            tokio::task::spawn_local(async move {
-                let context = Context::new(
-                    workflow_run_id,
-                    workflow_step_run_id,
-                    workflow_service_client,
-                    data,
-                );
-                action_callable(context, input.input).await
-            })
-            .await
-        })
-        .await
-    {
-        Ok(Ok(output_value)) => step_action_event(
-            worker_id,
-            &action,
-            StepActionEventType::StepEventTypeCompleted,
-            serde_json::to_string(&output_value).expect("must succeed"),
-        ),
-        Ok(Err(error)) => step_action_event(
-            worker_id,
-            &action,
-            StepActionEventType::StepEventTypeFailed,
-            error.to_string(),
-        ),
-        Err(join_error) => step_action_event(
-            worker_id,
-            &action,
-            StepActionEventType::StepEventTypeFailed,
-            join_error.to_string(),
-        ),
-    };
+    let mut dispatcher = dispatcher.clone();
 
-    dispatcher
-        .send_step_action_event(action_event)
-        .await
-        .map_err(crate::InternalError::CouldNotSendStepStatus)?
-        .into_inner();
+    let worker_id = worker_id.to_string();
+    let step_run_id = action.step_run_id.clone();
+    let abort_handle = action_function_task_join_set.spawn(async move {
+        let context = Context::new(
+            input.parents,
+            workflow_run_id,
+            workflow_step_run_id,
+            workflow_service_client,
+            data,
+        );
+        let action_event = match action_callable(context, input.input).catch_unwind().await {
+            Ok(Ok(output_value)) => step_action_event(
+                &worker_id,
+                &action,
+                StepActionEventType::StepEventTypeCompleted,
+                serde_json::to_string(&output_value).expect("must succeed"),
+            ),
+            Ok(Err(error)) => step_action_event(
+                &worker_id,
+                &action,
+                StepActionEventType::StepEventTypeFailed,
+                error.to_string(),
+            ),
+            Err(_) => step_action_event(
+                &worker_id,
+                &action,
+                StepActionEventType::StepEventTypeFailed,
+                "action panicked".to_owned(),
+            ),
+        };
+
+        dispatcher
+            .send_step_action_event(action_event)
+            .await
+            .map_err(crate::InternalError::CouldNotSendStepStatus)?
+            .into_inner();
+
+        Ok(())
+    });
+    abort_handles.insert(step_run_id, abort_handle);
+
+    Ok(())
+}
+
+async fn handle_cancel_step_run(
+    abort_handles: &mut HashMap<String, tokio::task::AbortHandle>,
+    action: AssignedAction,
+) -> crate::InternalResult<()> {
+    if let Some(abort_handle) = abort_handles.remove(&action.step_run_id) {
+        abort_handle.abort();
+    } else {
+        warn!(
+            "Could not find the abort handle for the workflow run ID: {}",
+            action.step_run_id
+        );
+    }
 
     Ok(())
 }
 
 pub(crate) async fn run(
+    action_function_task_join_set: &mut tokio::task::JoinSet<crate::InternalResult<()>>,
     mut dispatcher: DispatcherClient<
         tonic::service::interceptor::InterceptedService<
             tonic::transport::Channel,
@@ -167,6 +187,8 @@ pub(crate) async fn run(
     let mut listen_strategy = ListenStrategy::V2;
 
     let connection_attempt = tokio::time::Instant::now();
+
+    let mut abort_handles = HashMap::new();
 
     'main_loop: loop {
         info!("Listening…");
@@ -218,8 +240,6 @@ pub(crate) async fn run(
             }
         };
 
-        let local_set = LocalSet::new();
-
         loop {
             tokio::select! {
                 element = stream.next() => {
@@ -257,10 +277,10 @@ pub(crate) async fn run(
 
                     match action_type {
                         ActionType::StartStepRun => {
-                            handle_start_step_run(&mut dispatcher, workflow_service_client.clone(), &local_set, namespace, worker_id, &workflows, action, data.clone()).await?;
+                            handle_start_step_run(action_function_task_join_set, &mut abort_handles, &mut dispatcher, workflow_service_client.clone(),  namespace, worker_id, &workflows, action, data.clone()).await?;
                         }
                         ActionType::CancelStepRun => {
-                            todo!()
+                            handle_cancel_step_run(&mut abort_handles, action).await?;
                         }
                         ActionType::StartGetGroupKey => {
                             todo!()

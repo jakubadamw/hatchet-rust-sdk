@@ -13,7 +13,7 @@ pub struct Step {
     function: Arc<StepFunction>,
     #[builder(default)]
     pub(crate) retries: usize,
-    #[builder(default)]
+    #[builder(default, setter(custom))]
     pub(crate) parents: Vec<String>,
     #[builder(default = "std::time::Duration::from_secs(60)")]
     pub(crate) timeout: std::time::Duration,
@@ -26,30 +26,31 @@ pub trait UserStepFunction<I, O, H> {
 pub struct NoArguments;
 pub struct ContextArgument;
 
+fn serialize_result<O: serde::Serialize>(result: O) -> anyhow::Result<serde_json::Value> {
+    let json_value = serde_json::to_value(result).expect("must succeed");
+    if !json_value.is_object() && !json_value.is_null() {
+        anyhow::bail!(
+            "the result of a step function must be `null` serializable to a JSON value of an object: {json_value:?}"
+        );
+    }
+    Ok(json_value)
+}
+
 impl<I, O, Fut, F> UserStepFunction<I, O, ContextArgument> for &'static F
 where
     I: serde::de::DeserializeOwned,
-    O: serde::ser::Serialize,
-    Fut: std::future::Future<Output = anyhow::Result<O>> + 'static,
-    F: Fn(Context, I) -> Fut,
+    O: serde::Serialize,
+    Fut: std::future::Future<Output = anyhow::Result<O>> + Send + 'static,
+    F: Fn(Context, I) -> Fut + Sync,
 {
     fn to_step_function(self) -> Arc<StepFunction> {
         use futures_util::FutureExt;
         Arc::new(|context, value| {
-            let result = (self)(
+            let future = (self)(
                 context,
                 serde_json::from_value(value).expect("must succeed"),
             );
-            async {
-                let json_value = serde_json::to_value(result.await?).expect("must succeed");
-                if !json_value.is_object() && !json_value.is_null() {
-                    anyhow::bail!(
-                        "the result of a step function must be `null` serializable to a JSON value of an object: {json_value:?}"
-                    );
-                }
-                Ok(json_value)
-            }
-            .boxed_local()
+            std::panic::AssertUnwindSafe(async { serialize_result(future.await?) }.boxed())
         })
     }
 }
@@ -58,14 +59,14 @@ impl<I, O, Fut, F> UserStepFunction<I, O, NoArguments> for &'static F
 where
     I: serde::de::DeserializeOwned,
     O: serde::ser::Serialize,
-    Fut: std::future::Future<Output = anyhow::Result<O>> + 'static,
-    F: Fn(I) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<O>> + Send + 'static,
+    F: Fn(I) -> Fut + Sync,
 {
     fn to_step_function(self) -> Arc<StepFunction> {
         use futures_util::FutureExt;
         Arc::new(|_context, value| {
-            let result = (self)(serde_json::from_value(value).expect("must succeed"));
-            async { Ok(serde_json::to_value(result.await?).expect("must succeed")) }.boxed_local()
+            let future = (self)(serde_json::from_value(value).expect("must succeed"));
+            std::panic::AssertUnwindSafe(async { serialize_result(future.await?) }.boxed())
         })
     }
 }
@@ -81,6 +82,11 @@ impl StepBuilder {
         function: F,
     ) -> Self {
         self.function = Some(function.to_step_function());
+        self
+    }
+
+    pub fn parent(mut self, parent: impl Into<String>) -> Self {
+        self.parents.get_or_insert_default().push(parent.into());
         self
     }
 }
